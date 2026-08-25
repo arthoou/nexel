@@ -1,0 +1,65 @@
+name: Build LibreTranslate Linux CPU
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-cpu:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-venv python3-pip zip
+
+      - name: Create venv
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip wheel setuptools
+
+      - name: Install LibreTranslate and PyInstaller
+        run: |
+          .venv/bin/pip install libretranslate pyinstaller
+
+      - name: Build onedir binary
+        run: |
+          .venv/bin/pyinstaller \
+            --onedir \
+            --noupx \
+            --name libretranslate \
+            --collect-all libretranslate \
+            --collect-all argostranslate \
+            --collect-all argostranslatefiles \
+            --collect-all translatehtml \
+            --collect-all ctranslate2 \
+            --hidden-import=libretranslate \
+            .venv/bin/libretranslate
+
+      - name: Package zip
+        run: |
+          rm -f LibreTranslate-linux-cpu.zip
+          rm -rf package
+          mkdir -p package
+          cp -a dist/libretranslate/. package/
+          chmod +x package/libretranslate
+          cd package
+          zip -r ../LibreTranslate-linux-cpu.zip .
+          cd ..
+          ls -lh LibreTranslate-linux-cpu.zip
+          unzip -l LibreTranslate-linux-cpu.zip | head -80
+
+      - name: Upload to fix release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view fix >/dev/null 2>&1 || gh release create fix --title "fix" --notes "LibreTranslate artifact"
+          gh release upload fix LibreTranslate-linux-cpu.zip --clobber
