@@ -1,0 +1,66 @@
+name: Build LibreTranslate CPU
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-cpu
+            zip: LibreTranslate-linux-cpu.zip
+          - os: windows-latest
+            name: windows-cpu
+            zip: LibreTranslate-windows-cpu.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install libretranslate pyinstaller
+
+      - name: Create launcher
+        shell: bash
+        run: |
+          cat > launcher.py <<'PY'
+          from libretranslate.main import main
+
+          if __name__ == "__main__":
+              main()
+          PY
+
+      - name: Build binary
+        run: |
+          pyinstaller --clean --onedir --name libretranslate launcher.py --collect-all libretranslate --collect-all argostranslate --collect-all ctranslate2
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          cd dist/libretranslate
+          Compress-Archive -Path * -DestinationPath ../../${{ matrix.zip }} -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.zip }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fix
+          files: ${{ matrix.zip }}
