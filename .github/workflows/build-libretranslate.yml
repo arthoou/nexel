@@ -1,4 +1,4 @@
-name: Build LibreTranslate CPU
+name: Build LibreTranslate CPU Windows & Linux
 
 on:
   workflow_dispatch:
@@ -8,6 +8,8 @@ permissions:
 
 jobs:
   build:
+    name: Build ${{ matrix.name }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -15,6 +17,7 @@ jobs:
           - os: ubuntu-latest
             name: linux-cpu
             zip: LibreTranslate-linux-cpu.zip
+
           - os: windows-latest
             name: windows-cpu
             zip: LibreTranslate-windows-cpu.zip
@@ -22,16 +25,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          cache: pip
 
-      - name: Install dependencies
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install LibreTranslate and PyInstaller
         run: |
-          python -m pip install --upgrade pip
-          pip install libretranslate pyinstaller
+          python -m pip install libretranslate pyinstaller
 
       - name: Create launcher
         shell: bash
@@ -43,24 +51,100 @@ jobs:
               main()
           PY
 
-      - name: Build binary
-        run: |
-          pyinstaller --clean --onedir --name libretranslate launcher.py --collect-all libretranslate --collect-all argostranslate --collect-all ctranslate2
+      - name: Build LibreTranslate binary
+        run: >
+          pyinstaller
+          --clean
+          --noconfirm
+          --onedir
+          --name libretranslate
+          launcher.py
+          --collect-all libretranslate
+          --collect-all argostranslate
+          --collect-all ctranslate2
 
-      - name: Package zip
-        shell: pwsh
+      - name: Create ZIP
+        shell: bash
         run: |
-          cd dist/libretranslate
-          Compress-Archive -Path * -DestinationPath ../../${{ matrix.zip }} -Force
+          python - <<'PY'
+          import os
+          import zipfile
 
-      - name: Upload workflow artifact
+          source = os.path.join("dist", "libretranslate")
+          output = "${{ matrix.zip }}"
+
+          with zipfile.ZipFile(
+              output,
+              "w",
+              compression=zipfile.ZIP_DEFLATED,
+              compresslevel=9
+          ) as z:
+              for root, dirs, files in os.walk(source):
+                  for file in files:
+                      path = os.path.join(root, file)
+                      relative = os.path.relpath(path, source)
+                      z.write(path, relative)
+
+          print(f"Created: {output}")
+          PY
+
+      - name: Check generated files
+        shell: bash
+        run: |
+          echo "Generated package:"
+          ls -lh "${{ matrix.zip }}" || true
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.zip }}
+          if-no-files-found: error
+          compression-level: 0
 
-      - name: Upload to release
+
+  release:
+    name: Create GitHub Release
+
+    needs:
+      - build
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Show release files
+        run: |
+          echo "Files that will be uploaded:"
+          find release-files -type f -maxdepth 2 -print
+
+      - name: Create or update Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: fix
-          files: ${{ matrix.zip }}
+          name: LibreTranslate CPU Build
+          target_commitish: ${{ github.sha }}
+
+          body: |
+            LibreTranslate standalone CPU builds.
+
+            Builds included:
+            - Windows x64 CPU
+            - Linux x64 CPU
+
+            Generated automatically using GitHub Actions.
+
+          files: |
+            release-files/LibreTranslate-windows-cpu.zip
+            release-files/LibreTranslate-linux-cpu.zip
+
+          fail_on_unmatched_files: true
+          overwrite_files: true
