@@ -12,6 +12,7 @@ jobs:
 
     strategy:
       fail-fast: false
+
       matrix:
         include:
           - os: ubuntu-latest
@@ -28,18 +29,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: pip
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Install LibreTranslate and PyInstaller
+      - name: Install dependencies
         run: |
           python -m pip install libretranslate pyinstaller
+
+      - name: Show installed versions
+        run: |
+          python --version
+          python -m pip show libretranslate
+          pyinstaller --version
 
       - name: Create launcher
         shell: bash
@@ -51,17 +57,24 @@ jobs:
               main()
           PY
 
-      - name: Build LibreTranslate binary
-        run: >
-          pyinstaller
-          --clean
-          --noconfirm
-          --onedir
-          --name libretranslate
-          launcher.py
-          --collect-all libretranslate
-          --collect-all argostranslate
-          --collect-all ctranslate2
+      - name: Build LibreTranslate
+        shell: bash
+        run: |
+          pyinstaller \
+            --clean \
+            --noconfirm \
+            --onedir \
+            --name libretranslate \
+            launcher.py \
+            --collect-all libretranslate \
+            --collect-all argostranslate \
+            --collect-all ctranslate2
+
+      - name: Check build
+        shell: bash
+        run: |
+          echo "Build contents:"
+          find dist/libretranslate -maxdepth 2 -type f | head -100
 
       - name: Create ZIP
         shell: bash
@@ -73,28 +86,38 @@ jobs:
           source = os.path.join("dist", "libretranslate")
           output = "${{ matrix.zip }}"
 
+          if not os.path.isdir(source):
+              raise SystemExit(
+                  f"Build directory was not found: {source}"
+              )
+
           with zipfile.ZipFile(
               output,
               "w",
               compression=zipfile.ZIP_DEFLATED,
               compresslevel=9
-          ) as z:
-              for root, dirs, files in os.walk(source):
-                  for file in files:
-                      path = os.path.join(root, file)
-                      relative = os.path.relpath(path, source)
-                      z.write(path, relative)
+          ) as archive:
 
-          print(f"Created: {output}")
+              for root, dirs, files in os.walk(source):
+                  for filename in files:
+
+                      path = os.path.join(root, filename)
+                      relative = os.path.relpath(path, source)
+
+                      archive.write(
+                          path,
+                          relative
+                      )
+
+          size = os.path.getsize(output)
+
+          print()
+          print("ZIP created successfully")
+          print("File:", output)
+          print("Size:", round(size / 1024 / 1024, 2), "MB")
           PY
 
-      - name: Check generated files
-        shell: bash
-        run: |
-          echo "Generated package:"
-          ls -lh "${{ matrix.zip }}" || true
-
-      - name: Upload build artifact
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -104,7 +127,7 @@ jobs:
 
 
   release:
-    name: Create GitHub Release
+    name: Create Release
 
     needs:
       - build
@@ -121,26 +144,27 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Show release files
+      - name: Show downloaded files
         run: |
-          echo "Files that will be uploaded:"
-          find release-files -type f -maxdepth 2 -print
+          echo "Release files:"
+          find release-files -type f -print
 
       - name: Create or update Release
         uses: softprops/action-gh-release@v2
+
         with:
           tag_name: fix
           name: LibreTranslate CPU Build
           target_commitish: ${{ github.sha }}
 
           body: |
-            LibreTranslate standalone CPU builds.
+            Standalone LibreTranslate CPU builds.
 
-            Builds included:
-            - Windows x64 CPU
-            - Linux x64 CPU
+            Included:
+            - Windows x64
+            - Linux x64
 
-            Generated automatically using GitHub Actions.
+            Built automatically with GitHub Actions.
 
           files: |
             release-files/LibreTranslate-windows-cpu.zip
